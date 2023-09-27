@@ -23,13 +23,16 @@ irra = 0
 nhietdo = 0
 status = True
 
-def send_orther(a):
+with open("deviceConfig.conf", "r") as config_file:
+    config = json.load(config_file)
+
+def send_orther(a,b):
     time.sleep(0.1)
     client = mqtt.Client()
     client.username_pw_set('iot2022', 'iot2022')
     try:
         client.connect("core.ziot.vn", 5000)
-        data = json.dumps(DATA)
+        data = json.dumps(b)
         mqtt_topic = str(a) + '/reportData'
         client.publish(mqtt_topic, data)
         return
@@ -59,9 +62,12 @@ def mqtt_reconnect():
 
 
 def read_data():
-    
+    for device_id, device_info in config.get("modbustcp", {}).items():
+        if device_info['deviceType'] == "sensor":
+            ip = device_info['ip']
+            unitID =  device_info['unitID']
     global total,timestart, irra, nhietdo , status 
-    client1 = ModbusClient('192.168.100.2', port= 502, timeout=1)
+    client1 = ModbusClient(ip, port= 502, timeout=1)
 
     if client1.connect():
             print("connected device")
@@ -70,8 +76,9 @@ def read_data():
 
                     read_orther()
                     break                
-                try:  
-                    read = client1.read_input_registers(address=2, count=5, unit=1)
+                try:
+                    client1.connect()  
+                    read = client1.read_input_registers(address=2, count=5, unit=unitID)
                     nhietdo =  round(int(read.registers[4])/100,1)
                     a = str(format(read.registers[0], '016b')) + str(format(read.registers[1], '016b'))
                     if a[0] == '1':
@@ -87,6 +94,7 @@ def read_data():
                         pickle.dump(total, f)
                     timestart = time.time()
                     # print(total)
+                    client1.close()
                 except:
                     print("Device lost connection")
                     status = 0
@@ -100,11 +108,11 @@ def read_data():
         print("Connect to the device failed!!!   Try to connect to the device...")
         restart()
 
-def send_data():
+def send_data(mm):
     time.sleep(0.1)
     mqtt_broker = "core.ziot.vn"
     mqtt_port = 5000
-    mqtt_topic = "DEVportData"
+    mqtt_topic = "DEVICE/DO000000/PO000007/SI000008/PL000011/DE000999999999999/portData"
     client = mqtt.Client()
     client.username_pw_set('iot2022', 'iot2022')
     try:
@@ -119,13 +127,11 @@ def send_data():
         while True:
 
             try:   
-                if int(time.time()) >= int(timeset):
-                    break
+
                 delaysec = 10
                 a = delaysec * (time.time() // delaysec) + delaysec            
                 time.sleep(a - time.time() )
                 timeStamp = datetime.datetime.fromtimestamp(a)
-
 
                 if  status == 1:
                     irr = irra
@@ -135,12 +141,14 @@ def send_data():
                     client.publish(mqtt_topic, data)
                     time.sleep(0.1)
                     print(data,'\n')
-                    client.disconnect()
-                    
+                    client.disconnect()                  
                 elif status == 0 :
                     print("Device lost connection \nMQTT temporarily does not send data")
                     mqtt_reconnect()    
                     break
+                if int(time.time()) >= int(mm):
+                    break
+
 
             except:
                 print("MQTT lost connect")
@@ -158,12 +166,14 @@ def send_data():
 
 def read_orther():
     global timeset, data_package
-    with open("DeviceConfig.conf", "r") as config_file:
+    with open("deviceConfig.conf", "r") as config_file:
         config = json.load(config_file)    
     # while True:
         for device_id, device_info in config.get("modbustcp", {}).items():
 
             client = ModbusTcpClient(device_info['ip'], port=device_info['port'], timeout=1)
+            if device_info['deviceType'] == 'sensor':
+                continue
             try:
             
                 client.connect()
@@ -195,23 +205,24 @@ def read_orther():
                     # time.sleep(0.1)
                 client.close()
                 print('Connected',device_info['ip'],device_info['port'],device_info['unitID'] )
-                DATA = {"type": device_info['deviceType'], "data": [data_package], "timeStamp": str(datetime.datetime.fromtimestamp((time.time())))}
-                print(DATA)
+                DATA_1 = {"type": device_info['deviceType'], "data": [data_package], "timeStamp": str(datetime.datetime.fromtimestamp((time.time())))}
+                print(DATA_1)
+                threading.Thread(target=send_orther, args= (device_id,DATA_1,)).start()
                 data_package = {}
 
-                threading.Thread(target=send_orther, args= (device_id,)).start()
+                # threading.Thread(target=send_orther, args= (device_id,)).start()
 
             except Exception as e:
                 print('Connect to ',device_info['ip'],device_info['port'],device_info['unitID'], 'failed!!!')
                 data_package = {}  
             # time.sleep(0.1)  
     timeset = device_info['scanningCycleInSecond'] * (time.time() // device_info['scanningCycleInSecond'] + 1) 
-    run_main()
+    run_main(timeset)
 
 
-def run_main():  
+def run_main(m):  
     threading.Thread(target=reset_total).start()    
-    threading.Thread(target=send_data).start()
+    threading.Thread(target=send_data, args= (m,)).start()
     threading.Thread(target=read_data).start()
 
 read_orther()

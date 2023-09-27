@@ -1,11 +1,12 @@
 # syntax=docker/dockerfile:1
-FROM python:3.10-alpine
+FROM python:3.11.3-alpine
 ENV PYTHONUNBUFFERED=1
 RUN mkdir /etc/modbus/
 WORKDIR /etc/modbus/
 RUN apk add build-base && \
   apk add git && \
-  git clone https://github.com/tienvinhle/IOTGateway-modbus.git /etc/modbus/ && \
-  pip install requirements.txt && \
+  git clone https://github.com/doanhkem/Modbus_TCP.git /etc/modbus/ && \
+  pip3 install -r requirements.txt && \
+  apk del build-base linux-headers pcre-dev openssl-dev && \
   rm -rf /var/cache/apk/*
-CMD ["python", "appConnectivity.py"]
+CMD ["python", "read.py"]
