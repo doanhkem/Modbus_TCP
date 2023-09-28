@@ -41,7 +41,7 @@ def send_orther(a,b):
 
         
 def reset_total():
-    timereset = (time.time() // 86400 + 1) + 86400
+    timereset = (time.time() // 86400 + 1) * 86400
     global total
     while True:
         if time.time() >= timereset:
@@ -78,9 +78,9 @@ def read_data():
                     break                
                 try:
                     client1.connect()  
-                    read = client1.read_input_registers(address=2, count=5, unit=unitID)
-                    nhietdo =  round(int(read.registers[4])/100,1)
-                    a = str(format(read.registers[0], '016b')) + str(format(read.registers[1], '016b'))
+                    read1 = client1.read_input_registers(address=2, count=5, unit=unitID)
+                    nhietdo =  round(int(read1.registers[4])/100,1)
+                    a = str(format(read1.registers[0], '016b')) + str(format(read1.registers[1], '016b'))
                     if a[0] == '1':
                         irra = 0
                     else:
@@ -112,7 +112,7 @@ def send_data(mm):
     time.sleep(0.1)
     mqtt_broker = "core.ziot.vn"
     mqtt_port = 5000
-    mqtt_topic = "DEVICE/DO000000/PO000007/SI000008/PL000011/DE000999999999999/portData"
+    mqtt_topic = "DEVICE/DO000000/PO000007/SI000008/PL000011/DE000139/reportData"
     client = mqtt.Client()
     client.username_pw_set('iot2022', 'iot2022')
     try:
@@ -128,7 +128,7 @@ def send_data(mm):
 
             try:   
 
-                delaysec = 10
+                delaysec = 60
                 a = delaysec * (time.time() // delaysec) + delaysec            
                 time.sleep(a - time.time() )
                 timeStamp = datetime.datetime.fromtimestamp(a)
@@ -172,23 +172,27 @@ def read_orther():
         for device_id, device_info in config.get("modbustcp", {}).items():
 
             client = ModbusTcpClient(device_info['ip'], port=device_info['port'], timeout=1)
-            if device_info['deviceType'] == 'sensor':
-                continue
+            # if device_info['deviceType'] == 'sensor':
+            #     continue
             try:
             
                 client.connect()
-                
+                data_fomat = []
+
                 for register in device_info['tasks'].get("read_registers", []):
-                    
+
                     if device_info['deviceType'] == 'sensor':
                         result = client.read_input_registers(address=register['offSet'], count=5, unit = device_info['unitID'])
+                    elif device_info['deviceType'] == 'meter':
+                        result = client.read_input_registers(register['offSet'], count=register['size'], unit=device_info['unitID'])                    
                     else:
                         result = client.read_holding_registers(register['offSet'], count=register['size'], unit=device_info['unitID'])
-                    
+
                     data = result.registers
-                    
+
                     if register['dataType'] == 'float32':
-                        combined_data = (data[0] << 16) | data[1]
+
+                        combined_data = (data[1] << 16) | data[0]
                         value = struct.unpack('f', struct.pack('I', combined_data))[0]
                         value = round(struct.unpack('f', struct.pack('I', combined_data))[0]*(10 ** register['PF']),register['fractionDigit'])
 
@@ -196,26 +200,25 @@ def read_orther():
                         value = round((struct.unpack('>h', struct.pack('>H', data[0]))[0])*(10 ** register['PF']),register['fractionDigit'])
 
                     elif register['dataType'] == 'int32':
-
                         combined_data = (data[0] << 16) | data[1]
                         value = struct.unpack('>i', struct.pack('>I', combined_data))[0]
                         value = round(value * (10 ** register['PF']), register['fractionDigit'])
-                       
-                    data_package[register['tagName']] = value
+
+                    data_package = {register["tagName"] : value}
+                    data_fomat.append(data_package)
+
                     # time.sleep(0.1)
                 client.close()
                 print('Connected',device_info['ip'],device_info['port'],device_info['unitID'] )
-                DATA_1 = {"type": device_info['deviceType'], "data": [data_package], "timeStamp": str(datetime.datetime.fromtimestamp((time.time())))}
+                DATA_1 = {"type": device_info['deviceType'],"data" : data_fomat , "timeStamp": str(datetime.datetime.fromtimestamp((time.time())))}
                 print(DATA_1)
                 threading.Thread(target=send_orther, args= (device_id,DATA_1,)).start()
                 data_package = {}
 
-                # threading.Thread(target=send_orther, args= (device_id,)).start()
-
             except Exception as e:
                 print('Connect to ',device_info['ip'],device_info['port'],device_info['unitID'], 'failed!!!')
                 data_package = {}  
-            # time.sleep(0.1)  
+            time.sleep(0.1)  
     timeset = device_info['scanningCycleInSecond'] * (time.time() // device_info['scanningCycleInSecond'] + 1) 
     run_main(timeset)
 
