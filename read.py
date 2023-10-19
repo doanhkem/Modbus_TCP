@@ -18,13 +18,19 @@ status = None
 delaysec = 60
 data_queue = []
 timeset = None
-with open('backup.pickle', 'rb') as f:
-    backup = pickle.load(f)
-if backup != 0:
-    total = backup
-    print(total)
-else:
+try:
+    with open('backup.pickle', 'rb') as f:
+        backup = pickle.load(f)
+    if backup != 0:
+        total = backup
+        print(total)
+    else:
+        total = 0
+except:
     total = 0
+    with open('backup.pickle', 'wb') as f:
+        pickle.dump(total, f)    
+    print(total)
 
 with open("deviceConfig.conf", "r") as config_file:
     config = json.load(config_file)
@@ -88,6 +94,7 @@ def read_data(time3):
         if device_info['deviceType'] == "sensor":
             ip = device_info['ip']
             unitID =  device_info['unitID']
+            mqtt_topic = device_id
     client1 = ModbusClient(ip, port= 502, timeout=1)
 
     if client1.connect():
@@ -97,9 +104,9 @@ def read_data(time3):
                 read1 = client1.read_input_registers(address=2, count=5, unit=unitID)
                 nhietdo =  round(int(read1.registers[4])/100,1)
                 a = str(format(read1.registers[0], '016b')) + str(format(read1.registers[1], '016b'))
-                if a[0] == '1':
-                    irra = 0
                 irra = int(a,2)/100
+                if irra < 0 or irra > 1500:
+                    irra = 0
                 # time.sleep(0.2)
                 total += (irra*(time.time()-timestart))/3600
                 timestart = time.time()
@@ -112,8 +119,9 @@ def read_data(time3):
                 status = False
                 restart(time3)   
                 return
-
-
+        data_call = {"type": "smp3", "data": [{"totalIrradce": round(irra)}, {"dailyIrradtn": round(total/1000,3)}, {"ambientTemp": nhietdo}], "timeStamp": str(datetime.datetime.fromtimestamp((time.time())))}
+        threading.Thread(target=send_orther, args= (mqtt_topic,data_call,)).start()
+        print(data_call)
         status = False      
         read_orther() 
         return  
@@ -184,25 +192,15 @@ def read_orther():
             time.sleep(0.1)  
     timeset = device_info['scanningCycleInSecond'] * (time.time() // device_info['scanningCycleInSecond'] + 1) 
     # timeset = (time.time() // 30 + 1) * 30
-    run_main(timeset)
+
+    # if (time.time() <= (((time.time()) // 86400 ) * 86400 + 11 * 3600)) and (time.time() >= (((time.time()) // 86400) * 86400 - 2 * 3600)):
+        # run_main(timeset)
+    # else:
+        # time.sleep(41400)
+    threading.Thread(target=read_data, args= (timeset,)).start()
     return
 
-def call_data():
-    time.sleep(1)
-    mqtt_topic = "DEVICE/DO000000/PO000007/SI000008/PL000011/DE000139"
-    while True:
-        while status:
-            time.sleep(delaysec * (time.time() // delaysec + 1)  - time.time())
-            timeStamp = datetime.datetime.fromtimestamp(delaysec * (time.time() // delaysec) )
-            data_call = {"type": "smp3", "data": [{"totalIrradce": round(irra)}, {"dailyIrradtn": round(total/1000,3)}, {"ambientTemp": nhietdo}], "timeStamp": str(timeStamp)}
-            print(data_call)
-            threading.Thread(target=send_orther, args= (mqtt_topic,data_call,)).start()
-        time.sleep(1)
-
-def run_main(time1):    
-    threading.Thread(target=read_data, args= (time1,)).start()
 if __name__ == "__main__":
     threading.Thread(target=queue_data).start()
     threading.Thread(target=reset_total).start()  
-    threading.Thread(target=call_data).start()
     read_orther()
